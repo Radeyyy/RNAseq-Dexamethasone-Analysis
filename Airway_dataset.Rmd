@@ -1,0 +1,530 @@
+---
+title: "RNA-seq Analysis of Dexamethasone-Treated Airway Cells"
+output:
+  html_document:
+    df_print: paged
+---
+
+## Introduction
+
+This project investigates differences in gene expression between dexamethasone-treated and untreated human airway smooth muscle cells using a publicly available RNA-seq dataset.
+```{r}
+# load the installed airway package 
+library(airway)
+# loads the RNA-seq dataset in R
+data(airway)
+dim(airway) # shows the dimensions of the dataset how many rows and columns 
+airway
+```
+## assay(airway) — Gene expression counts.
+colData(airway) — Information about each sample, such as treatment status.
+rowData(airway) — Information about the genes.
+assays — The experimental measurements stored in the dataset. (1) — There is one assay (one measurement matrix) stored.
+counts — The name of that assay. It contains the number of sequencing reads assigned to each gene in each sample
+
+```{r}
+# retrieve the count matrix and selects row 1-5 and all columns 
+assay(airway)[1:5, ]
+```
+
+
+```{r}
+# col for columns and data for info about the samples  
+#metadata - meaning data about data
+colData(airway)
+# trt treated with dexamethasone untrt is control 
+```
+## Research question: 
+"How does dexamethasone treatment affect gene expression?"
+```{r}
+# know which smaples belong to each group before comparing their gene expression
+table(colData(airway)$dex) # selects the colum named dex
+```
+```{r}
+# check gene info
+rowData(airway)
+```
+## DESeq2
+
+```{r}
+library(DESeq2)
+# name the new line deseqdataset, the input is from airway and the design we want is dex 
+dds <- DESeqDataSet(airway, design = ~ dex)
+
+dds <- DESeq(dds)
+# DESeq2 considers both the magnitude of gene expression changes and variability between samples.
+res <- results(dds)
+
+head(res)
+summary(res)
+resultsNames(dds)
+```
+# 
+basemean - average normalized expression, log2FoldChange - how much expression changed in which direction. lfcSE - uncertainty in the extimated log2 fold change. stat- statistical test statistic, p-value - evidence aginst no difference, padj - p-value adjusted fro multiple testing
+LFC log fold change 
+
+```{r}
+res <- results(dds, contrast = c("dex", "trt", "untrt"), alpha = 0.05)
+summary(res)
+```
+
+```{r}
+#store the data as R data frame
+res_df <- as.data.frame(res)
+
+#filter significant genes 
+sig_genes <- res_df[res_df$padj < 0.05 & !is.na(res_df$padj), ]
+
+nrow(sig_genes)
+```
+
+```{r}
+#create a separate data frame that excludes genes with missing adjusted p-values.
+
+plot_df <- na.omit(res_df)
+
+nrow(plot_df)
+```
+## Volcano plot 
+```{r}
+library(ggplot2)
+ggplot(plot_df, aes(x = log2FoldChange, y = -log10(padj))) + geom_point() + geom_hline(yintercept = -log10(0.05)) +  geom_vline(xintercept = c(-1, 1))
+```
+
+
+```{r}
+plot_df$Significance <- "Not Significant"
+```
+
+
+```{r}
+# identify upregulated genes 
+plot_df$Significance[ plot_df$padj < 0.05 & plot_df$log2FoldChange > 1] <- "Upregulated"
+table(plot_df$Significance)
+
+plot_df$Significance[plot_df$padj < 0.05 & plot_df$log2FoldChange < -1] <- "Downregulated"
+table(plot_df$Significance)
+
+```
+
+```{r}
+ggplot(plot_df, aes(x = log2FoldChange, y = -log10(padj), color = Significance)) + geom_point() + scale_color_manual(values = c("Upregulated" = "red", "Downregulated" = "blue","Not Significant" = "grey"  )) + labs(
+    title = "Effect of Dexamethasone on Gene Expression",
+    x = "Log2 Fold Change (Treated vs Untreated)",
+    y = "-Log10 Adjusted P-value",
+    color = "Gene Category"
+  ) + theme_minimal()
+
+ggsave("figures/volcano_plot.png", width = 8, height = 6)
+```
+
+## PCA (Principal Component Analysis)
+Do the treated and untreated samples show different overall gene expression patterns?
+Volcano plot → Each dot represents a gene.
+PCA plot → Each dot represents a sample.
+Prepare data using Variance Stabilizing Transformation (VST).
+vst() transforms the normalized gene-count data so that genes with very high counts don't dominate the analysis simply because of their greater variability.
+VST reduces this dependence between the mean and variance, making the data more suitable for PCA.
+
+```{r}
+vsd <- vst(dds, blind = FALSE)
+```
+
+
+```{r}
+plotPCA(vsd, intgroup = "dex")
+```
+PC1 (Principal Component 1): Captures the largest source of variation between samples.
+PC1 = 44% means that PC1 explains 44% of the variation represented in the data used for PCA.
+PC2 (Principal Component 2): Captures the second-largest source of variation, independently of PC1.
+PC2 = 25% means that PC2 explains another 25%.
+total = 69% the two axes summarize 69% of variation in the data 
+
+```{r}
+plotPCA(vsd, intgroup = "cell")
+```
+
+
+```{r}
+design(dds) <- ~ cell + dex
+```
+
+
+```{r}
+dds <- DESeq(dds)
+```
+
+
+```{r}
+res <- results(dds,
+               contrast = c("dex", "trt", "untrt"),
+               alpha = 0.05)
+summary(res)
+```
+
+
+```{r}
+res_df <- as.data.frame(res)
+
+head(res_df)
+plot_df <- na.omit(res_df)
+
+```
+
+```{r}
+plot_df$Significance <- "Not Significant"
+
+# identify upregulated genes 
+plot_df$Significance[ plot_df$padj < 0.05 & plot_df$log2FoldChange > 1] <- "Upregulated"
+
+plot_df$Significance[plot_df$padj < 0.05 & plot_df$log2FoldChange < -1] <- "Downregulated"
+table(plot_df$Significance)
+```
+
+## Volcano Plot
+
+```{r}
+nrow(plot_df)
+unique(plot_df$Significance)
+```
+
+
+```{r}
+ggplot(plot_df, aes(x = log2FoldChange, y = -log10(padj), color = Significance)) + geom_point() + scale_color_manual(values = c("Upregulated" = "red", "Downregulated" = "blue","Not Significant" = "grey"  )) + geom_hline(yintercept = -log10(0.05),
+           linetype = "dashed") +
+geom_vline(xintercept = c(-1, 1),
+           linetype = "dashed") + labs(
+    title = "Effect of Dexamethasone on Gene Expression",
+    x = "Log2 Fold Change (Treated vs Untreated)",
+    y = "-Log10 Adjusted P-value",
+    color = "Gene Category"
+  ) + theme_minimal()
+```
+
+
+```{r}
+ggsave("figures/volcano_plot.png", width = 8,height = 6,dpi = 300)
+```
+
+PCA helps to understand the overall patterns in the  eight samples, including whether treatment and cell-line differences contribute to variation.
+
+The volcano plot helps to identify individual genes showing statistically significant expression changes.
+
+
+##Gene Annotation
+Gene annotation identifies what is known about a gene. GO enrichment later tests which functions or processes are overrepresented across the gene list.
+ENSG00000152583 these are Ensembl gene ID
+
+```{r}
+head(rownames(res_df))
+```
+## Gene Ontology (GO) enrichment and  Pathway analysis (KEGG) KEGG (Kyoto Encyclopedia of Genes and Genomes)
+Which biological processes are changing in response to treatment
+
+```{r}
+# uses clusterProfiler - output Go terms
+# installing annotationDbi to tell us what each genes are 
+# BiocManager::install("AnnotationDbi")
+# BiocManager::install("org.Hs.eg.db")
+#load the human annotation package #organism, homo sapien, entrez gene by ncbi database #Human organism Entrez Gene database
+library(org.Hs.eg.db)
+```
+
+
+```{r}
+gene_id <- "ENSG00000141510"
+```
+
+
+```{r}
+AnnotationDbi::select(org.Hs.eg.db, keys = gene_id, columns = c("SYMBOL", "GENENAME"), keytype = "ENSEMBL"
+)
+```
+
+order(res_df$padj), Sorts the row positions by adjusted p-value, from smallest to largest.
+rownames(), Retrieves the gene identifiers.
+head(..., 10) Keeps the first 10
+```{r}
+# Find the 10 most statistically significant genes
+top10 <- head(rownames(res_df[order(res_df$padj), ]), 10)
+top10
+```
+
+```{r}
+AnnotationDbi::select(org.Hs.eg.db, keys = top10, columns = c("SYMBOL", "GENENAME"), keytype = "ENSEMBL"
+)
+```
+
+
+```{r}
+#Connect gene names to expression changes
+head(res_df[order(res_df$padj), ], 10)
+```
+
+Are certain biological processes overrepresented among the genes that changed?
+```{r}
+# create a list of genese satisfying the significance criteria
+sig_genes <- rownames(res_df)[  !is.na(res_df$padj) & res_df$padj < 0.05]
+length(sig_genes)
+head(sig_genes)
+```
+
+DESeq2 identifies which genes changed significantly. GO enrichment identifies which biological processes are overrepresented among those genes. 
+
+```{r}
+library(AnnotationDbi) #Helps translate gene identifiers
+library(org.Hs.eg.db) #Provides human gene annotations
+library(clusterProfiler) #Performs GO enrichment analysis
+```
+
+###
+
+Ensembl ID: Used by the Ensembl database.
+Entrez Gene ID: Used by NCBI Gene.
+Gene symbol: A recognizable name, such as TP53
+```{r}
+entrez_genes <- mapIds(
+  org.Hs.eg.db,
+  keys = sig_genes,
+  column = "ENTREZID",
+  keytype = "ENSEMBL",
+  multiVals = "first" #If multiple matches exist, return the first
+)
+head(entrez_genes)
+entrez_genes <- na.omit(entrez_genes) # for Ensembl IDs that might not have a corresponding Entrez ID
+
+length(entrez_genes)
+```
+
+```{r}
+length(unique(entrez_genes))
+```
+##Prepare background genes for GO enrichment
+Compare 
+Significant genes: Genes that changed significantly after dexamethasone treatment.
+with 
+Background genes: All eligible genes, including significant and non-significant genes.
+
+```{r}
+background_genes <- rownames(res_df)[!is.na(res_df$pvalue)]
+length(background_genes)
+```
+** How common is a biological process among our significant genes compared with how common it is among all eligible genes? **
+```{r}
+background_entrez <- mapIds(
+  org.Hs.eg.db, keys = background_genes, column = "ENTREZID", keytype = "ENSEMBL", multiVals = "first")
+background_entrez <- na.omit(background_entrez)
+length(background_entrez)
+```
+
+```{r}
+background_entrez <- unique(background_entrez)
+length(background_entrez)
+```
+# checks whether each significant Entrez ID appears in the background list.
+```{r}
+# checks whether each significant Entrez ID appears in the background list.
+sum(entrez_genes %in% background_entrez)
+```
+
+## Run GO enrichment
+the GO has 3 categories 
+### Biological Process BP 
+### Molecular Function MF
+### Cellular Component CC
+BH Controls the False Discovery Rate (most common in RNA-seq)
+```{r}
+# use the enrichGO() function from clusterProfiler
+
+ego <- enrichGO(
+  gene = entrez_genes,  # sig genes
+  universe = background_entrez,  # background genes 
+  OrgDb = org.Hs.eg.db, # Human gene annotation database
+  keyType = "ENTREZID",
+  ont = "BP", # Analyze Biological Processes
+  pAdjustMethod = "BH", # Adjust p-values using Benjamini–Hochberg
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.05,
+  readable = TRUE #Display gene symbols instead of Entrez IDs in the enrichment results
+)
+ego
+```
+These results suggest that genes associated with blood-vessel formation and extracellular matrix organization are particularly overrepresented among the differentially expressed genes.
+
+```{r}
+dotplot(ego, showCategory = 10, label_format = 35)
+```
+
+Genes associated with angiogenesis, extracellular matrix organization, and cytoskeletal organization are significantly enriched among the differentially expressed genes. 
+
+GO enrichment results show that genes associated with angiogenesis and actin filament organization are overrepresented among our differentially expressed genes.
+
+It does not tell us whether those biological processes increased or decreased in activity.
+GO Biological Process enrichment analysis identified 572 significantly enriched terms among the differentially expressed genes. Prominent terms included angiogenesis, extracellular matrix organization, and actin filament organization. These findings suggest that dexamethasone treatment is associated with transcriptional changes involving cellular organization, adhesion, and signaling. However, enrichment analysis alone does not establish whether these processes are activated or suppressed.
+
+```{r}
+ggsave("figures/GO_dotplot.png", width = 10, height = 7, dpi = 300)
+```
+
+## Biological interpretation
+Angiogenesis is the formation of new blood vessels from existing blood vessels.
+It is important for:Tissue growth and repair, Wound healing, Supplying tissues with oxygen and nutrients. Certain diseases, including cancer.
+The	Result shows: 
+Biological process	Angiogenesis
+GeneRatio	186/3406
+FoldEnrichment	1.71
+Adjusted p-value	4.03 × 10⁻¹²
+
+This means genes associated with angiogenesis are significantly overrepresented among the differentially expressed genes.
+Next is to examine the genes contributing to angiogenesis enrichment and determine whether their expression increased or decreased after treatment.
+```{r}
+head(as.data.frame(ego))
+```
+
+
+```{r}
+# selects the first row whcih is angiogenesi s and selects the column containing the genes associated with that process 
+as.data.frame(ego)[1, "geneID"]
+```
+### Examine angiogenesis-related genes
+```{r}
+angiogenesis_genes <- as.data.frame(ego)[1, "geneID"]
+
+head(strsplit(angiogenesis_genes, "/")[[1]], 5) #/ split the text and display the first five genes
+
+```
+## make connection 
+GO enrichment tells us which genes belong to the angiogenesis process.
+DESeq2 tells us whether each gene has higher or lower expression after dexamethasone treatment.
+```{r}
+angiogenesis_list <- strsplit(angiogenesis_genes, "/")[[1]]
+
+head(angiogenesis_list, 5)
+```
+##Connect gene symbols to Ensembl IDs
+```{r}
+gene_mapping <- AnnotationDbi::select(
+  org.Hs.eg.db,
+  keys = angiogenesis_list,
+  keytype = "SYMBOL",
+  columns = "ENSEMBL"
+)
+
+head(gene_mapping)
+```
+
+
+```{r}
+gene_mapping$ENSEMBL %in% rownames(res_df)
+```
+
+
+```{r}
+matched_genes <- gene_mapping[
+  gene_mapping$ENSEMBL %in% rownames(res_df),
+]
+head(matched_genes)
+```
+
+
+```{r}
+gene_results <- res_df[matched_genes$ENSEMBL, ]
+head(gene_results)
+```
+
+
+```{r}
+head(gene_results[, c("log2FoldChange", "padj")])
+```
+
+
+```{r}
+gene_results$SYMBOL <- matched_genes$SYMBOL
+
+head(gene_results[, c("SYMBOL", "log2FoldChange", "padj")])
+```
+
+
+```{r}
+head(matched_genes$ENSEMBL)
+```
+
+
+```{r}
+head(rownames(gene_results))
+```
+
+```{r}
+identical(matched_genes$ENSEMBL, rownames(gene_results))
+```
+
+
+```{r}
+head(gene_results[, c("SYMBOL", "log2FoldChange", "padj")])
+```
+
+
+```{r}
+write.csv(gene_results,
+          "results/angiogenesis_genes.csv",
+          row.names = TRUE)
+```
+
+```{r}
+write.csv(res_df, "results/DESeq2_results.csv")
+```
+
+
+```{r}
+go_results <- as.data.frame(ego)
+```
+
+```{r}
+write.csv(go_results, "results/GO_results.csv", row.names = FALSE)
+```
+
+## Results
+
+### Differential Gene Expression Analysis
+
+Differential gene expression analysis was performed using DESeq2 to compare dexamethasone-treated and untreated human airway smooth muscle cells while accounting for differences between cell lines.
+
+Using an adjusted p-value threshold of 0.05, 4,028 genes were identified as significantly differentially expressed. Of these, 2,211 were upregulated and 1,817 were downregulated following dexamethasone treatment.
+
+### Principal Component Analysis
+
+Principal component analysis (PCA) showed separation between treated and untreated samples along PC1, which explained 44% of the variation. PC2 explained an additional 25% of the variation. Differences between cell lines also appeared to contribute to sample variation.
+
+### Gene Ontology Enrichment Analysis
+
+GO Biological Process enrichment analysis identified 572 significantly enriched terms. Prominent processes included angiogenesis, extracellular matrix organization, and actin filament organization.
+
+These findings suggest that dexamethasone treatment is associated with changes in genes involved in cellular structure, extracellular matrix organization, and signaling. However, enrichment alone does not establish whether these biological processes were activated or inhibited.
+
+
+### Discussion 
+### Extracellular Matrix Organization
+
+GO enrichment analysis identified extracellular matrix organization as one of the significantly enriched biological processes following dexamethasone treatment. This suggests that dexamethasone is associated with transcriptional changes in genes involved in extracellular matrix organization, cell adhesion, and structural support.
+
+Because the enrichment analysis included both upregulated and downregulated genes, these findings do not establish whether extracellular matrix organization was activated or suppressed. Further experimental validation, such as immunofluorescence imaging or measurement of extracellular matrix proteins, would be needed to determine whether these transcriptional changes result in alterations to extracellular matrix structure or function.
+
+```{r}
+sessionInfo()
+```
+
+
+```{r}
+writeLines(capture.output(sessionInfo()),
+           "sessionInfo.txt")
+```
+
+## Citation
+T Wu, E Hu, S Xu, M Chen, P Guo, Z
+Dai, T Feng, L Zhou, W Tang, L
+Zhan, X Fu, S Liu, X Bo, and G Yu.
+clusterProfiler 4.0: A universal
+enrichment tool for interpreting
+omics data. The Innovation. 2021,
+2(3):100141
+
